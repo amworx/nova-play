@@ -1,0 +1,159 @@
+# Handoff — Nova Play (local video player)
+
+Handoff written for the next AI assistant continuing work on this project.
+Read this fully before touching code. The user is **impatient**: verify APIs, make
+decisive single-shot edits, build + install + verify on-device fast, and never
+leave the app in a broken intermediate state.
+
+## What the app is
+
+Offline-first local Android video player ("Nova Play"). Scans MediaStore
+(photo_manager), plays via `video_player`, remembers favorites / playlists /
+resume progress (shared_preferences), full custom player screen with gestures
+(seek/brightness/volume/tap/long-press), subtitles, sleep timer, queue, speed
+control, share/rename/delete. Light + dark theme, RTL-ready, 1080×2340 target.
+
+## Quick facts
+
+- **Project root**: `C:/Users/HP/Documents/code_repo/video_player`
+- **Device**: `RFCWA0BJT9F` (Samsung A346E, Android 16, 1080×2340, density 420,
+  px→dp ÷2.625). Also reachable over adb as `10.10.0.6:5555`.
+- **Package**: `com.example.video_player`
+- **State management**: flutter_riverpod 2.x (not Riverpod 3).
+- **Deps** (pubspec): riverpod, video_player 2.14, photo_manager 3.12,
+  permission_handler (pinned `12.0.1`), shared_preferences, hugeicons,
+  wakelock_plus, screen_brightness, volume_controller, path_provider, share_plus.
+- **No git repo** in the project folder. Rollback = manual file snapshots.
+  `.rollback_7btn_row/` holds the pre-bottom-bar player state (see below).
+- **UI spec**: `UI_DESIGN.md` is authoritative. Premium/minimal, video-focused,
+  auto-hide chrome, NOT a VLC/MX/YouTube clone.
+
+## Architecture / key files
+
+```
+lib/
+  main.dart                      entry (permission flow etc.)
+  app.dart                       MaterialApp + Shell (bottom tabs) + themeMode wiring
+  models/video_item.dart         VideoItem {id (entityId-or-path), path, entityId, title, ...}
+  models/playlist.dart
+  data/prefs_store.dart          PrefsStore: favorites/progress/playlists/theme helpers
+  data/library_repository.dart   MediaStore scan + cache
+  data/subtitle_parser.dart
+  state/providers.dart           prefsStoreProvider(plain Provider!), playerProvider,
+                                 libraryProvider, favoritesProvider, historyProvider,
+                                 playlistsProvider, themeModeProvider
+  state/player_controller.dart   PlayerController (ChangeNotifier) — playback, queue,
+                                 sleep timer, subtitles, deleteVideo
+  ui/screens/player_screen.dart  the big one: player UI + gesture layers + sheets
+  ui/screens/home|library|search|playlists|settings_screen.dart
+  ui/widgets/...                 mini_player, queue_sheet, video_thumb, video_tile, empty_state
+  theme/app_theme.dart           AppTheme.light()/dark()
+integration_test/player_controls_test.dart
+test/widget_test.dart            3 tests, all pass
+```
+
+## Providers — CRITICAL quirks (learned the hard way)
+
+- `prefsStoreProvider` is a **plain `Provider<PrefsStore>`**. Watching it never
+  rebuilds when SharedPreferences change. Any UI that must react to prefs writes
+  must watch a dedicated StateProvider and the writer must set BOTH the store
+  value and the provider state (see `themeModeProvider` + the settings sheet).
+- **Do NOT `ref.invalidate(prefsStoreProvider)`** — `playerProvider` watches it,
+  invalidating recreates `PlayerController` mid-playback (kills audio).
+- `favoritesProvider`/`historyProvider`/`playlistsProvider` are in-memory state
+  providers seeded from the store; mutations must update provider + store.
+- `libraryProvider` (LibraryNotifier) re-scans MediaStore + re-caches on
+  `refresh()`. **Always refresh after add/delete** so dead entries disappear.
+
+## Player screen structure (current)
+
+- Portrait layout = `Column`/`ListView`: `_VideoCard` (with time chip +
+  gesture layers) → wave card → `_SpeedRow` → `_ExtraRow`.
+- **7-button action bar is a `bottomNavigationBar`, NOT in the list**:
+  `_ActionsRow` (Save · Queue · Sleep · Share · Rename · Details · **Delete**)
+  wrapped in a `SafeArea` + fixed-height `Container` (**must keep a fixed
+  height and `mainAxisSize.min` columns — otherwise the Row's loose full-screen
+  constraints stretch every button to fill the screen; this broke the whole UI
+  once**). Delete is last, red (`cs.error`), confirmation dialog.
+- Fullscreen chrome does NOT use `_ActionsRow`/`_ExtraRow` — it owns separate
+  `_fBtn` rows.
+- Queue/sleep sheets are **file-level helper functions** (`_queueSheet`,
+  `_sleepSheet` in player_screen.dart) so both portrait and any future viewers
+  can open them. `_ExtraRow` = subtitles toggle only.
+
+## Delete flow (deleteVideo)
+
+`PlayerController.deleteVideo(VideoItem)`:
+1. Delete via `PhotoManager.editor.deleteWithIds([v.entityId])` (Android 13+
+   shows system trash confirm; returns `List<String>` of actually-deleted ids)
+   with `File(v.path).delete()` fallback for path-only items.
+2. If deleted item was current → `next()` (if `hasNext`) else `closePlayer()`.
+   **Advance/close FIRST** so `closePlayer()`'s progress-write for the deleted
+   item gets overwritten by cleanup, not re-added.
+3. Persisted cleanup: `store.removeFavorite/removeProgress/removeFromAllPlaylists`.
+4. Controller is ref-free for deletion; the **screen's `_deleteDialog`** owns
+   the in-memory provider updates (`favoritesProvider` set minus, then
+   `libraryProvider.notifier.refresh()`) so the dead entry vanishes, then
+   snackbar + pops if the player closed.
+
+## Verification workflow (text-only — the model can't see screenshots)
+
+1. `flutter analyze` the touched files — must be 0 errors.
+2. `flutter test` (test/widget_test.dart, 3 tests).
+3. `flutter build apk --debug` then
+   `adb -s RFCWA0BJT9F install -r build/app/outputs/flutter-apk/app-debug.apk`.
+4. `adb -s RFCWA0BJT9F logcat -c` before launch; launch via
+   `adb shell am start -n com.example.video_player/.MainActivity`.
+5. `adb shell "uiautomator dump /sdcard/ui.xml; cat /sdcard/ui.xml"` — verify
+   bounds + content-desc of every control you touched, screen fills
+   (`lowest_node_bottom` ≈ 2340 on device), no overlaps.
+6. `adb shell input tap X Y` to drive taps; grep logcat for `FATAL`,
+   `Bad state`, `RenderFlex`/overflow (must be 0).
+
+## Known-landmine checklist (do not re-learn)
+
+- **Bottom bar width math**: device width 1080px = 411dp. The 7 buttons fit
+  because each `_action` cell is 48dp (40dp circle). Shrinking/label-wrapping
+  unbounded columns cause vertical explosions (see fixed-height note above).
+- **Serialized `open()`**: rapid `next()` calls are FIFO-chained in the
+  controller; breaking that re-introduces "Bad state: No active player with ID".
+  15-tap stress test must stay green.
+- **vc-gated UI**: render video surface only when `PlayerStatus.ready`; during
+  loading show card spinner + ghost chrome (prevents black screen).
+- **Orientation**: fullscreen toggles system rotation + restores prior
+  orientation on exit. Gesture layers: double-tap ±10s, long-press 2×, tap
+  toggles chrome, drag = seek/brightness/volume (by side).
+- **Sleep timer**: `setSleepTimer(Duration)` / `setSleepEndOfVideo` /
+  `cancelSleepTimer` exist on the controller; timer fires → closePlayer.
+- **Theme switching** was "not working" because of the plain-Provider quirk —
+  already fixed via `themeModeProvider`; if it regresses, check the sheet sets
+  BOTH store and provider.
+- **Permissions**: runtime permission flow lives in `main.dart`; library
+  re-init after grant re-scans MediaStore.
+
+## Out-of-scope / not to break
+
+- `lib/mockups/`, `lib/main_mockups.dart` are legacy design-exploration code —
+  compile-checked but not part of the app; don't touch unless asked.
+- `.rollback_7btn_row/` = snapshot of the 7-button row-in-list state
+  (player_screen.dart, player_controller.dart, prefs_store.dart). Restore by
+  copying back over `lib/...` if the user asks to reverse the bottom bar.
+
+## Current status
+
+- All user-reported bugs fixed and on-device verified: aspect ratio in
+  portrait, "Nothing to play", rapid-next "Bad state", compact one-screen
+  portrait layout, 7-button bar (in bottom nav), real delete, theme switcher.
+- Analyzer clean (0 errors), tests pass, no FATALs/Bad-state in logcat.
+- Known warnings (pre-existing, cosmetic): a couple of `unused_element`
+  (e.g. old `_FOLDER`/legacy helpers) — safe to clean or leave.
+
+## Tips for the next session
+
+- Read `UI_DESIGN.md` before any visual change; it drives every layout choice.
+- Make ONE consolidated edit per region, then immediately analyze+build+tap-test
+  on device; the user reviews by behavior, not by code.
+- If you add a pref-backed setting: add a StateProvider + store write + provider
+  write in the same edit, wire app-level consumers to the provider.
+- Keep debugPrints out of final code unless asked; on-device verification uses
+  uiautomator/location logcat — those show enough without print spam.
