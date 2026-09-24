@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Nova Play launcher background (Folio ink). -->
-    <color name="ic_launcher_background">#23201A</color>
+    <!-- Nova Play launcher background (sampled from the source artwork). -->
+    <color name="ic_launcher_background">#45D6AC</color>
 </resources>

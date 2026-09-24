@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -80,6 +81,9 @@ class PlayerController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void>? _pendingOpenFuture;
 
   Future<void> open(VideoItem video, {List<VideoItem>? contextQueue, int startAtMs = -1}) {
+    // System notification (Android 13+) needs an explicit grant; ask once on
+    // first playback, never block playback on it.
+    unawaited(_ensureNotificationPermission());
     // Rapid taps / auto-advance + manual tap can enqueue the same video twice
     // (queueIndex hasn't advanced yet). Drop the duplicate.
     if (_pendingOpenFuture != null &&
@@ -657,6 +661,20 @@ class PlayerController extends ChangeNotifier with WidgetsBindingObserver {
     final vc = _vc;
     if (vc == null || !vc.value.isInitialized) return Size.zero;
     return vc.value.size;
+  }
+
+  static bool _notifAsked = false;
+
+  /// One-shot POST_NOTIFICATIONS grant for the media notification.
+  /// Denied/permanently-denied just means no notification — playback is
+  /// unaffected, and the system never re-prompts on its own.
+  Future<void> _ensureNotificationPermission() async {
+    try {
+      if (_notifAsked) return;
+      _notifAsked = true;
+      final st = await Permission.notification.status;
+      if (st.isDenied) await Permission.notification.request();
+    } catch (_) {}
   }
 
   Future<void> exitFullscreen() async {

@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Minimal local-playback permissions only. INTERNET is used ONLY for
          in-app update checks/downloads (GitHub Releases); playback and the
          library stay offline-first. -->
@@ -6,6 +7,10 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Media (now-playing) notification via audio_service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Self-update from GitHub Releases (sideloaded builds). REMOVE for
          Google Play builds: Play updates the app itself and forbids
          REQUEST_INSTALL_PACKAGES for self-updating apps. -->
@@ -41,6 +46,22 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- audio_service: now-playing notification + transport keys. -->
+        <service android:name="com.ryanheise.audioservice.AudioService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true"
+            tools:ignore="Instantiatable">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+        <receiver android:name="com.ryanheise.audioservice.MediaButtonReceiver"
+            android:exported="true"
+            tools:ignore="Instantiatable">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
         <!-- ota_update 7.x: FileProvider serving the downloaded APK from the
              plugin's internal dir so the system installer can read it. -->
         <provider

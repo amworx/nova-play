@@ -19,6 +19,7 @@ Open → find a video → play → enjoy. No accounts, no cloud, no streaming �
 - **File actions** — share, rename, details, real delete from player AND lists (one system confirmation), bulk select (long-press) with favorite/delete, pull-to-refresh everywhere
 - **Search** — instant file/folder name search with empty state
 - **In-app updates** — Settings → App updates checks GitHub Releases, downloads the APK with progress, and opens the installer automatically
+- **Media notification** — now-playing notification with Play/Pause/Next/Previous + live progress (shade + lock screen); asked once via system permission, dismisses on Close
 - **Themes** — light + dark (video-comfortable dark), system / light / dark setting
 - **RTL-ready**, Hugeicons throughout, 48dp touch targets
 

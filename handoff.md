@@ -169,6 +169,32 @@ delegates to it):
   write in the same edit, wire app-level consumers to the provider.
 - Keep debugPrints out of final code unless asked; on-device verification uses
   uiautomator/location logcat — those show enough without print spam.
+
+## Media notification (added 2026-09-24)
+
+- `audio_service 0.18.19` (MIT). `lib/state/media_notification.dart →
+  NovaAudioHandler` (same-isolate bridge): transport keys → PlayerController,
+  player listener → throttled `mediaItem`/`playbackState` (per-second while
+  playing, instant on track/state/control flips; OS projects smooth progress).
+- `main.dart` creates ONE PlayerController shared by the handler (builder)
+  and UI (`playerProvider.overrideWith`); `AudioService.init` in try/catch —
+  if it fails, playback works with no notification. `MainActivity` extends
+  `AudioServiceActivity` (shared engine for shade/lock/headset keys).
+- Manifest: `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_MEDIA_PLAYBACK` +
+  `POST_NOTIFICATIONS` (+ service + receiver). POST_NOTIFICATIONS asked
+  one-shot on first `open()`; denied = no notification, playback unaffected.
+- Dismissal: Close → idle broadcast + `stop()`; `androidResumeOnClick: false`
+  so Close REMOVES (not detaches) the notification. Pause keeps a
+  dismissible Play notification. Verified live: title/artist/times/Prev/
+  Pause/Next, shade-Play resumes, shade-Pause pauses, Close → shade shows
+  "No notifications".
+- Gotcha (do NOT re-debug): after Close, `dumpsys notification` may still
+  list a ghost record while the shade is empty — Samsung NoMan bookkeeping,
+  user-invisible. The REAL bug this hunt exposed was an older detached
+  leftover (first build used default `androidResumeOnClick: true`); fixed by
+  full reinstall. Never trust dumpsys alone — the shade dump is truth.
+- Note: shade-Play while backgrounded resumes AUDIO (video surface catches
+  up on reopen); headset clicks behave the same. Acceptable media semantics.
 - **Up-next strip height is text-scale-driven** (`64 + (11+10)*1.5` via
   `textScalerOf`): a fixed 88px overflowed 11px (RenderFlex, bottom) at
   1.3× text — the "overflow by x pixels" users saw. Never fix a text-height
@@ -196,3 +222,13 @@ delegates to it):
   auto-opens the installer — don't "upgrade" it. Debug-key signing for now;
   Play builds must REMOVE `REQUEST_INSTALL_PACKAGES` and use Play In-App
   Updates instead. About row now shows the real installed version.
+## App icon (v2 - user-picked loops mark, 2026-09-24)
+
+- Teal tile #3ADBB4 + navy #0E0E38 interlocking-loops ribbon (user Image 1, redrawn as an original PIL drawing - never copy web pixels).
+- Legacy: full-bleed rounded PNGs per density. Adaptive: teal ic_launcher_background color + transparent drawable/ic_launcher_foreground.png (loops inside the 72dp safe zone).
+- Generator lives in temp dir (nova_icon_v2.py), not in repo. Verify via APK zip-listing + pixel sampling + ASCII composition preview (text-only model cannot see screenshots - preview that way before every icon change).
+
+## App icon (v3 - pixel-faithful, 2026-09-24)
+
+- Source: icon_images/img.png (user-supplied, 1000px, teal #45D6AC + navy mark, bbox ~224,270-774,728). v2 procedural redraw was rejected - never redraw blind again.
+- Conversion: mark pixels extracted with teal-distance alpha feathering into drawable/ic_launcher_foreground.png (62% safe-zone span); legacy PNGs are straight resizes; bg color sampled exact. Generator: nova_icon_v3.py in temp dir.
