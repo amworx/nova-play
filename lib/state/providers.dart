@@ -1,7 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/library_repository.dart';
 import '../data/prefs_store.dart';
+import '../data/update_service.dart';
 import '../models/playlist.dart';
 import '../models/video_item.dart';
 import 'player_controller.dart';
@@ -167,3 +169,19 @@ class PlaylistNotifier extends StateNotifier<List<Playlist>> {
 }
 
 final searchQueryProvider = StateProvider<String>((_) => '');
+
+/// Bulk selection (video ids). Empty = normal browse mode; non-empty =
+/// selection mode (taps toggle, Library bar offers Favorite/Delete).
+/// Deselecting everything exits selection mode. Session-only.
+final librarySelectionProvider =
+    StateProvider<Set<String>>((_) => <String>{});
+
+/// Installed app identity (version/build) for the Updates section + About row.
+final appVersionProvider =
+    FutureProvider<PackageInfo>((_) => PackageInfo.fromPlatform());
+
+/// Ephemeral update state: checking → available → downloading (with progress)
+/// → installing. Session-only on purpose, so it never touches SharedPreferences
+/// and sidesteps the plain-Provider rebuild quirk entirely.
+final updateStateProvider =
+    StateProvider<UpdateState>((_) => const UpdateState.idle());

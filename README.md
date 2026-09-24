@@ -16,8 +16,9 @@ Open → find a video → play → enjoy. No accounts, no cloud, no streaming �
 - **History & resume** — recently played, continue watching with progress
 - **Sleep timer** — 15 / 30 / 45 / 60 min + end-of-video, easy cancel
 - **Subtitles** — SRT / VTT, enable/disable + track selection
-- **File actions** — share, rename, details, real delete (MediaStore trash + provider + cache cleanup)
+- **File actions** — share, rename, details, real delete from player AND lists (one system confirmation), bulk select (long-press) with favorite/delete, pull-to-refresh everywhere
 - **Search** — instant file/folder name search with empty state
+- **In-app updates** — Settings → App updates checks GitHub Releases, downloads the APK with progress, and opens the installer automatically
 - **Themes** — light + dark (video-comfortable dark), system / light / dark setting
 - **RTL-ready**, Hugeicons throughout, 48dp touch targets
 
@@ -55,6 +56,14 @@ flutter build apk --debug
 adb -s RFCWA0BJT9F install -r build/app/outputs/flutter-apk/app-debug.apk
 adb -s RFCWA0BJT9F shell am start -n com.example.video_player/.MainActivity
 ```
+
+## Updates & releases
+
+- Users update from **Settings → App updates**: check → Download & install → system installer opens automatically after the download.
+- Updates are served from **GitHub Releases** (`ota_update` + `package_info_plus`; Android needs `INTERNET` + `REQUEST_INSTALL_PACKAGES` + the `OtaUpdateFileProvider` entry).
+- To ship one: push a tag `vX.Y.Z` — `.github/workflows/release.yml` runs analyze + tests, builds `--release` with `--build-name=<tag>` / `--build-number=<run>`, and attaches `nova-play-vX.Y.Z.apk` to the release.
+- Release builds currently sign with **debug keys** (see `android/app/build.gradle.kts`); add a real upload keystore before Play submission.
+- **Play builds must drop `REQUEST_INSTALL_PACKAGES`** (Play forbids self-update permission) and use Play In-App Updates instead.
 
 ## Project structure
 

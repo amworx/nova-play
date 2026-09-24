@@ -81,20 +81,31 @@ test/widget_test.dart            3 tests, all pass
   `_sleepSheet` in player_screen.dart) so both portrait and any future viewers
   can open them. `_ExtraRow` = subtitles toggle only.
 
-## Delete flow (deleteVideo)
+## Delete flow (deleteVideo / deleteVideos)
 
-`PlayerController.deleteVideo(VideoItem)`:
-1. Delete via `PhotoManager.editor.deleteWithIds([v.entityId])` (Android 13+
-   shows system trash confirm; returns `List<String>` of actually-deleted ids)
-   with `File(v.path).delete()` fallback for path-only items.
-2. If deleted item was current → `next()` (if `hasNext`) else `closePlayer()`.
-   **Advance/close FIRST** so `closePlayer()`'s progress-write for the deleted
-   item gets overwritten by cleanup, not re-added.
-3. Persisted cleanup: `store.removeFavorite/removeProgress/removeFromAllPlaylists`.
-4. Controller is ref-free for deletion; the **screen's `_deleteDialog`** owns
-   the in-memory provider updates (`favoritesProvider` set minus, then
-   `libraryProvider.notifier.refresh()`) so the dead entry vanishes, then
-   snackbar + pops if the player closed.
+`PlayerController.deleteVideos(List<VideoItem>)` (single `deleteVideo`
+delegates to it):
+1. ONE `PhotoManager.editor.deleteWithIds(allIds)` call for all MediaStore
+   assets → ONE system trash consent even for bulk deletes, with
+   `File(v.path).delete()` fallback for path-only items.
+2. Drop deleted ids from the queue; if current was deleted → `next()` (if
+   `hasNext`) else `closePlayer()`. **Advance/close FIRST** so
+   `closePlayer()`'s progress-write for the deleted item gets overwritten by
+   cleanup, not re-added.
+3. Persisted cleanup per item: `store.removeFavorite/removeProgress/
+   removeFromAllPlaylists`.
+4. Shared UI helper `lib/ui/delete_flow.dart → confirmAndDelete()` owns the
+   confirm dialog + in-memory refresh (`favoritesProvider` set minus,
+   invalidate `history`/`playlists` — playlists invalidate is safe, unlike
+   `prefsStoreProvider` which must NEVER be invalidated mid-playback) +
+   `libraryProvider.notifier.refresh()` so dead entries vanish everywhere,
+   + snackbar. Player + list menus + bulk bar all use it.
+5. Lists: `VideoOverflowMenu` has Play/Queue/Favorite/**Delete**;
+   long-press any `VideoTile` enters bulk selection
+   (`librarySelectionProvider`, tint + check badge, taps toggle);
+   Library bar shows count + Favorite-selected + Delete-selected, then
+   auto-clears. Pull-to-refresh on All/Recent/Favorites/Folders/FolderDetail;
+   Rescan button in Library bar + Settings.
 
 ## Verification workflow (text-only — the model can't see screenshots)
 
@@ -115,6 +126,7 @@ test/widget_test.dart            3 tests, all pass
 - **Bottom bar width math**: device width 1080px = 411dp. The 7 buttons fit
   because each `_action` cell is 48dp (40dp circle). Shrinking/label-wrapping
   unbounded columns cause vertical explosions (see fixed-height note above).
+  Bar height 84 (was 78) for large-text headroom — keep FIXED either way.
 - **Serialized `open()`**: rapid `next()` calls are FIFO-chained in the
   controller; breaking that re-introduces "Bad state: No active player with ID".
   15-tap stress test must stay green.
@@ -157,3 +169,30 @@ test/widget_test.dart            3 tests, all pass
   write in the same edit, wire app-level consumers to the provider.
 - Keep debugPrints out of final code unless asked; on-device verification uses
   uiautomator/location logcat — those show enough without print spam.
+- **Up-next strip height is text-scale-driven** (`64 + (11+10)*1.5` via
+  `textScalerOf`): a fixed 88px overflowed 11px (RenderFlex, bottom) at
+  1.3× text — the "overflow by x pixels" users saw. Never fix a text-height
+  box again; same reason the action bar is 84, not 78.
+
+## In-app updates (added 2026-09-23)
+
+- Source: GitHub Releases of `amworx/nova-play`. Check API:
+  `releases/latest` → first `.apk` asset (prefers `nova-play-<tag>.apk`).
+- New files: `lib/data/update_service.dart` (check + semver compare +
+  session-only `UpdateState`), `test/update_check_test.dart`,
+  `android/app/src/main/res/xml/filepaths.xml`,
+  `.github/workflows/release.yml` (tag `v*` → analyze+test → release APK
+  with `--build-name=<tag>` `--build-number=<run>` so versionCode always rises).
+- Deps added: `ota_update 7.1.0` (MIT, download + auto install-intent),
+  `package_info_plus` (was transitive, now direct).
+- Android: `INTERNET` + `REQUEST_INSTALL_PACKAGES` + `OtaUpdateFileProvider`
+  (`${applicationId}.ota_update_provider`); desugaring on in
+  `android/app/build.gradle.kts` (`desugar_jdk_libs:2.0.4`).
+- UI: Settings → "Updates" group (`_UpdatesSection` in settings_screen.dart),
+  ephemeral `updateStateProvider` (no prefs keys). Pre-flight
+  `Permission.requestInstallPackages` check with "Open app settings" recovery;
+  CANCELED/ALREADY_RUNNING/DOWNLOAD_ERROR all mapped to human messages.
+- Landmines: default `execute()` (NOT `usePackageInstaller:true`) is what
+  auto-opens the installer — don't "upgrade" it. Debug-key signing for now;
+  Play builds must REMOVE `REQUEST_INSTALL_PACKAGES` and use Play In-App
+  Updates instead. About row now shows the real installed version.

@@ -11,12 +11,14 @@ import '../../state/providers.dart';
 import '../../state/player_controller.dart';
 import '../../data/subtitle_parser.dart';
 import '../../utils/format.dart';
+import '../delete_flow.dart';
 import '../widgets/queue_sheet.dart';
 import '../widgets/video_thumb.dart';
 
 /// Tideform: the playing page chosen from the Dune explorations.
 /// Portrait scrolls: header · up next · video · time · transport ·
-/// waveform · actions · speeds. Real fullscreen rotates to landscape.
+/// waveform · actions · speeds. Fullscreen follows the video: portrait clips
+/// stay portrait, landscape clips rotate to landscape.
 class PlayerScreen extends ConsumerStatefulWidget {
   const PlayerScreen({super.key});
   @override
@@ -128,7 +130,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       bottomNavigationBar: SafeArea(
         top: false,
         child: Container(
-          height: 78,
+          height: 84,
           decoration: BoxDecoration(
             border: Border(
               top: BorderSide(
@@ -204,7 +206,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     );
   }
 
-  // ============ LANDSCAPE FULLSCREEN ============
+  // ============ FULLSCREEN (orientation follows the video) ============
 
   Widget _fullscreen(PlayerController player) {
     // Only wrap a live, fully-initialized controller: a switching one is dead
@@ -567,8 +569,13 @@ class _UpNextStrip extends ConsumerWidget {
                 color: cs.onSurface.withValues(alpha: 0.55))),
       );
     }
+    // Height follows the system text scale: thumbnail (56) + gap (4) +
+    // two text lines. A fixed height clips (RenderFlex overflow) as soon
+    // as the user picks larger text.
+    final ts = MediaQuery.textScalerOf(context);
+    final stripH = 64 + (ts.scale(11) + ts.scale(10)) * 1.5;
     return SizedBox(
-      height: 88,
+      height: stripH,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: items.length,
@@ -1304,50 +1311,13 @@ class _ActionsRow extends ConsumerWidget {
     );
   }
 
-  /// Destructive confirm → controller.deleteVideo → UI-side refresh of the
-  /// in-memory providers (favorites set + library list) + feedback.
+  /// Destructive confirm → shared delete flow (controller + all provider
+  /// refreshes) → leave this screen when the trash took the shown video.
   Future<void> _deleteDialog(BuildContext context, WidgetRef ref,
       PlayerController player, VideoItem v) async {
-    final cs = Theme.of(context).colorScheme;
-    final yes = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Delete video?'),
-        content: Text(
-            '"${v.title}" will be moved to trash and removed from '
-            'your library, favorites, playlists and queue.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              style: FilledButton.styleFrom(
-                  backgroundColor: cs.error,
-                  foregroundColor: cs.onError),
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Delete')),
-        ],
-      ),
-    );
-    if (yes != true || !context.mounted) return;
-    final ok = await player.deleteVideo(v);
-    if (!context.mounted) return;
-    if (ok) {
-      final cur = Set<String>.of(ref.read(favoritesProvider));
-      if (cur.remove(v.id)) {
-        ref.read(favoritesProvider.notifier).state = cur;
-      }
-      await ref.read(libraryProvider.notifier).refresh();
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Video deleted.')));
-        // The trash took the file we were showing: leave this screen.
-        if (!player.hasVideo) Navigator.pop(context);
-      }
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text(
-              "Couldn't delete this file (system trash refused).")));
+    final n = await confirmAndDelete(context, ref, [v]);
+    if (n > 0 && context.mounted && !player.hasVideo) {
+      Navigator.pop(context);
     }
   }
 

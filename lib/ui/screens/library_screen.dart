@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hugeicons/hugeicons.dart';
 import '../../state/providers.dart';
 import '../../models/video_item.dart';
+import '../delete_flow.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/video_tile.dart';
 
@@ -20,24 +21,53 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   @override
   Widget build(BuildContext context) {
     final lib = ref.watch(libraryProvider);
+    final sel = ref.watch(librarySelectionProvider);
+    final selecting = sel.isNotEmpty;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Library'),
+        leading: selecting
+            ? IconButton(
+                tooltip: 'Clear selection',
+                onPressed: () => ref
+                    .read(librarySelectionProvider.notifier)
+                    .state = <String>{},
+                icon: const HugeIcon(
+                    icon: HugeIcons.strokeRoundedCancel01),
+              )
+            : null,
+        title:
+            Text(selecting ? '${sel.length} selected' : 'Library'),
         actions: [
-          IconButton(
-            tooltip: 'Rescan',
-            onPressed: () =>
-                ref.read(libraryProvider.notifier).refresh(),
-            icon: const HugeIcon(
-                icon: HugeIcons.strokeRoundedRefresh01),
-          ),
-          IconButton(
-            tooltip: 'Settings',
-            onPressed: () =>
-                Navigator.of(context).pushNamed('/settings'),
-            icon: const HugeIcon(
-                icon: HugeIcons.strokeRoundedSettings01),
-          ),
+          if (selecting) ...[
+            IconButton(
+              tooltip: 'Favorite selected',
+              onPressed: () => _favoriteSelected(ref, sel),
+              icon: const HugeIcon(
+                  icon: HugeIcons.strokeRoundedFavourite),
+            ),
+            IconButton(
+              tooltip: 'Delete selected',
+              onPressed: () => _deleteSelected(context, ref, sel),
+              icon: HugeIcon(
+                  icon: HugeIcons.strokeRoundedDelete01,
+                  color: Theme.of(context).colorScheme.error),
+            ),
+          ] else ...[
+            IconButton(
+              tooltip: 'Rescan',
+              onPressed: () =>
+                  ref.read(libraryProvider.notifier).refresh(),
+              icon: const HugeIcon(
+                  icon: HugeIcons.strokeRoundedRefresh01),
+            ),
+            IconButton(
+              tooltip: 'Settings',
+              onPressed: () =>
+                  Navigator.of(context).pushNamed('/settings'),
+              icon: const HugeIcon(
+                  icon: HugeIcons.strokeRoundedSettings01),
+            ),
+          ],
         ],
         bottom: TabBar(
           controller: tabs,
@@ -84,6 +114,35 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     );
   }
 
+  /// Favorite every selected video that isn't one yet, then exit selection.
+  Future<void> _favoriteSelected(WidgetRef ref, Set<String> sel) async {
+    final store = ref.read(prefsStoreProvider);
+    final favs = Set<String>.of(ref.read(favoritesProvider));
+    var changed = false;
+    for (final id in sel) {
+      if (favs.add(id)) {
+        await store.toggleFavorite(id);
+        changed = true;
+      }
+    }
+    if (changed) ref.invalidate(favoritesProvider);
+    ref.read(librarySelectionProvider.notifier).state = <String>{};
+  }
+
+  /// Delete every selected video with ONE system confirmation, refresh all
+  /// lists, then exit selection (deleted items vanish everywhere).
+  Future<void> _deleteSelected(
+      BuildContext context, WidgetRef ref, Set<String> sel) async {
+    final videos = ref.read(libraryProvider).valueOrNull ?? [];
+    final items = videos.where((v) => sel.contains(v.id)).toList();
+    if (items.isEmpty) {
+      ref.read(librarySelectionProvider.notifier).state = <String>{};
+      return;
+    }
+    await confirmAndDelete(context, ref, items);
+    ref.read(librarySelectionProvider.notifier).state = <String>{};
+  }
+
   Widget _list(BuildContext context, WidgetRef ref, List<VideoItem> videos) {
     final history = ref.watch(historyProvider);
     return RefreshIndicator(
@@ -121,12 +180,14 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           v.folder.isEmpty ? 'Videos' : v.folder, () => []).add(v);
     }
     final keys = folders.keys.toList()..sort();
-    return ListView.builder(
-      itemCount: keys.length,
-      itemBuilder: (_, i) {
-        final k = keys[i];
-        final list = folders[k]!;
-        return ListTile(
+    return RefreshIndicator(
+      onRefresh: () => ref.read(libraryProvider.notifier).refresh(),
+      child: ListView.builder(
+        itemCount: keys.length,
+        itemBuilder: (_, i) {
+          final k = keys[i];
+          final list = folders[k]!;
+          return ListTile(
           leading: Container(
             width: 48,
             height: 48,
@@ -150,6 +211,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                   name: k, videos: list))),
         );
       },
+      ),
     );
   }
 }
@@ -163,12 +225,15 @@ class _FolderDetail extends ConsumerWidget {
     final history = ref.watch(historyProvider);
     return Scaffold(
       appBar: AppBar(title: Text(name)),
-      body: ListView.builder(
-        itemCount: videos.length,
-        itemBuilder: (_, i) => VideoTile(
-          video: videos[i],
-          queueContext: videos,
-          progressMs: history[videos[i].id]?['pos'],
+      body: RefreshIndicator(
+        onRefresh: () => ref.read(libraryProvider.notifier).refresh(),
+        child: ListView.builder(
+          itemCount: videos.length,
+          itemBuilder: (_, i) => VideoTile(
+            video: videos[i],
+            queueContext: videos,
+            progressMs: history[videos[i].id]?['pos'],
+          ),
         ),
       ),
     );

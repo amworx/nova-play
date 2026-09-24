@@ -11,6 +11,22 @@ import '../data/subtitle_parser.dart';
 
 enum PlayerStatus { idle, loading, ready, error }
 
+/// Orientation lock for fullscreen from the video's own dimensions.
+/// Portrait clips (taller than wide) stay portrait; everything else —
+/// landscape, square, or still-unknown — rotates to landscape.
+List<DeviceOrientation> preferredFullscreenOrientations(Size size) {
+  if (size.width > 0 && size.height > size.width) {
+    return const [
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown
+    ];
+  }
+  return const [
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight
+  ];
+}
+
 /// Single playback brain: lifecycle-safe, disposes media correctly,
 /// handles queue, resume, speed, sleep timer, subtitles, fullscreen.
 class PlayerController extends ChangeNotifier with WidgetsBindingObserver {
@@ -460,44 +476,69 @@ class PlayerController extends ChangeNotifier with WidgetsBindingObserver {
   /// advances to the next item or closes the player if the queue empties.
   /// Ref-free on purpose: the caller (screen, which owns a Ref) refreshes
   /// the in-memory favorites/library providers. Returns success.
-  Future<bool> deleteVideo(VideoItem v) async {
-    var ok = false;
+  Future<bool> deleteVideo(VideoItem v) async =>
+      await deleteVideos([v]) == 1;
+
+  /// Delete many videos with a SINGLE system consent: one `deleteWithIds`
+  /// call for every MediaStore asset (Android shows one trash dialog instead
+  /// of one per video), then per-item cleanup. Returns the deleted count.
+  Future<int> deleteVideos(List<VideoItem> items) async {
+    if (items.isEmpty) return 0;
+    final withId = items
+        .where((v) => v.entityId != null && v.entityId!.isNotEmpty)
+        .toList();
+    final pathOnly = items
+        .where((v) =>
+            (v.entityId == null || v.entityId!.isEmpty) &&
+            v.path.isNotEmpty)
+        .toList();
+    final deletedEntityIds = <String>{};
+    final deletedPathIds = <String>{};
     try {
-      if (v.entityId != null && v.entityId!.isNotEmpty) {
-        final deleted =
-            await PhotoManager.editor.deleteWithIds([v.entityId!]);
-        ok = deleted.isNotEmpty;
-      } else if (v.path.isNotEmpty) {
+      if (withId.isNotEmpty) {
+        final res = await PhotoManager.editor
+            .deleteWithIds(withId.map((v) => v.entityId!).toList());
+        deletedEntityIds.addAll(res);
+      }
+    } catch (_) {}
+    for (final v in pathOnly) {
+      try {
         final f = File(v.path);
         if (await f.exists()) {
           await f.delete();
-          ok = true;
+          deletedPathIds.add(v.id);
         }
-      }
-    } catch (_) {
-      ok = false;
+      } catch (_) {}
     }
-    if (!ok) return false;
+    if (deletedEntityIds.isEmpty && deletedPathIds.isEmpty) return 0;
+    final deleted = items
+        .where((v) =>
+            deletedEntityIds.contains(v.entityId) ||
+            deletedPathIds.contains(v.id))
+        .toList();
 
-    // Advance/close FIRST so closePlayer()'s own progress-write for the
+    // Drop them from the queue wherever they sit (shuffled or not).
+    for (var i = queue.length - 1; i >= 0; i--) {
+      if (deleted.any((d) => d.id == queue[i].id)) removeFromQueue(i);
+    }
+    // Advance/close FIRST so closePlayer()'s own progress-write for a
     // deleted item is overwritten by the cleanup below, not re-added.
-    final wasCurrent = current?.id == v.id;
-    if (wasCurrent && hasNext) {
-      await next();
-    } else if (wasCurrent) {
-      await closePlayer();
-    } else {
-      // Drop it from the queue wherever it sits (shuffled or not).
-      for (var i = queue.length - 1; i >= 0; i--) {
-        if (queue[i].id == v.id) removeFromQueue(i);
+    final wasCurrent = deleted.any((d) => d.id == current?.id);
+    if (wasCurrent) {
+      if (hasNext) {
+        await next();
+      } else {
+        await closePlayer();
       }
     }
 
     // Persisted stores.
-    await store.removeFavorite(v.id);
-    await store.removeProgress(v.id);
-    await store.removeFromAllPlaylists(v.id);
-    return true;
+    for (final d in deleted) {
+      await store.removeFavorite(d.id);
+      await store.removeProgress(d.id);
+      await store.removeFromAllPlaylists(d.id);
+    }
+    return deleted.length;
   }
 
   void reorderQueue(int oldI, int newI) {
@@ -600,14 +641,22 @@ class PlayerController extends ChangeNotifier with WidgetsBindingObserver {
   bool get sleepEndOfVideo => _sleepEndOfVideo;
 
   // --- fullscreen / orientation ---
+  /// Enters fullscreen following the video: a vertical clip stays in
+  /// portrait instead of being force-flipped sideways; landscape (or a
+  /// not-yet-measured) video rotates to landscape like before.
   Future<void> enterFullscreen() async {
     fullscreen = true;
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    await SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
+    await SystemChrome.setPreferredOrientations(
+        preferredFullscreenOrientations(_videoSize()));
     notifyListeners();
+  }
+
+  /// Live video dimensions, or [Size.zero] when nothing is measurable yet.
+  Size _videoSize() {
+    final vc = _vc;
+    if (vc == null || !vc.value.isInitialized) return Size.zero;
+    return vc.value.size;
   }
 
   Future<void> exitFullscreen() async {

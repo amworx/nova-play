@@ -1,8 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Minimal local-playback permissions only. No INTERNET: offline-first. -->
+    <!-- Minimal local-playback permissions only. INTERNET is used ONLY for
+         in-app update checks/downloads (GitHub Releases); playback and the
+         library stay offline-first. -->
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Self-update from GitHub Releases (sideloaded builds). REMOVE for
+         Google Play builds: Play updates the app itself and forbids
+         REQUEST_INSTALL_PACKAGES for self-updating apps. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application
         android:label="Nova Play"
         android:name="${applicationName}"
@@ -34,6 +41,17 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- ota_update 7.x: FileProvider serving the downloaded APK from the
+             plugin's internal dir so the system installer can read it. -->
+        <provider
+            android:name="sk.fourq.otaupdate.OtaUpdateFileProvider"
+            android:authorities="${applicationId}.ota_update_provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/filepaths" />
+        </provider>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
